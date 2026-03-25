@@ -30,6 +30,7 @@ Structure: most recent entries at the top within each section.
 11. [Testing & Debugging Workflows](#11-testing--debugging-workflows)
 12. [Fork-Specific Decisions](#12-fork-specific-decisions)
 13. [Open Questions / TODO](#13-open-questions--todo)
+14. [GitHub Pages Deployment — Challenges & Reality Check](#14-github-pages-deployment--challenges--reality-check)
 
 ---
 
@@ -607,6 +608,258 @@ Standard time resolution for all CGG distribution studies is **15-minute interva
 - [ ] **MV Oberrhein test case:** Can this pre-built network (included in pandapower) serve as a realistic test case for the web UI?
 - [ ] **Voltage constraint coloring:** The PRD specifies 0.95–1.05 pu as the acceptable range. For 400V LV networks in the Philippines, the regulatory range may differ (±10% is common). Parametrize the limits.
 - [ ] **Upstream version tracking:** Note the current upstream version when making fork changes so we can diff against future upstream releases.
+
+---
+
+## 14. GitHub Pages Deployment — Challenges & Reality Check
+
+This section addresses the most fundamental question about the web UI approach:
+
+> **"Would my virtual environment (venv) be running on GitHub Pages?"**
+
+**Short answer: No. GitHub Pages has no Python, no venv, no server of any kind.**
+
+Understanding this is critical before any implementation work begins.
+
+---
+
+### 14.1 What GitHub Pages Actually Is
+
+GitHub Pages is a **static file hosting service**. It serves HTML, CSS, and JavaScript files — nothing else. When a visitor loads your page:
+
+```
+Browser → GitHub CDN → Delivers index.html, app.js, style.css
+```
+
+That's it. There is no machine on GitHub's side running your code. There is no Python interpreter, no pip, no venv, no Flask server, no Jupyter kernel. The files are served like a file from a USB drive.
+
+**Implication:** All computation must happen in the visitor's own browser.
+
+---
+
+### 14.2 Where the venv Actually Lives
+
+Your venv (`venv-pandapower`) is a local construct on your development machine. It:
+- Lives in a directory on your disk (e.g., `/home/justin/opencode260220/pandapower/venv-pandapower/`)
+- Contains a copy of Python and all installed packages
+- Is only active when you explicitly activate it in a terminal
+- Has zero presence on GitHub Pages after a `git push`
+
+When you push to GitHub, you are pushing **source files only** — `.py`, `.md`, `.html`, `.js`, etc. The venv directory is (correctly) in `.gitignore` and never pushed.
+
+```
+Your machine                     GitHub Pages
+─────────────────                ─────────────────────────────
+venv-pandapower/  (local only)
+  ├── python3.11
+  ├── pandapower/                 docs/pf-web/
+  ├── pandas/             push →    ├── index.html   ← served to users
+  ├── scipy/                        ├── app.js
+  └── ...                           └── style.css
+```
+
+---
+
+### 14.3 Pyodide: Python Running Inside the Visitor's Browser
+
+To run pandapower computations on a static page, we use **Pyodide** — a complete Python 3.11 runtime compiled to **WebAssembly (WASM)**.
+
+When a visitor opens the page:
+1. Their browser downloads the Pyodide runtime (~20MB, from the Pyodide CDN)
+2. The browser executes Python code inside a sandboxed WASM environment
+3. `micropip.install('pandapower')` installs pandapower from PyPI into that sandbox
+4. `pp.runpp(net)` runs entirely on the visitor's CPU, inside their browser tab
+
+```
+Visitor's Browser Tab
+─────────────────────────────────────────────────────
+JavaScript (app.js)
+    ↓ calls
+Pyodide WASM runtime  ←── downloaded from pyodide CDN (~20MB)
+    ↓ runs
+Python 3.11
+    ↓ imports
+pandapower (installed via micropip from PyPI)
+    ↓
+pp.runpp(net)  ← runs on visitor's CPU, 100% client-side
+    ↓
+Results returned as JSON to JavaScript
+    ↓
+Chart.js renders the results
+```
+
+**There is no server. The visitor's computer is doing all the work.**
+
+---
+
+### 14.4 The Real Challenges of This Approach
+
+#### Challenge 1: Load Time (The Biggest UX Problem)
+
+On first visit, the browser must download:
+- Pyodide runtime: ~20MB
+- Python standard library (bundled with Pyodide): ~10MB
+- numpy, pandas, scipy (pre-compiled WASM wheels): ~30MB total
+- pandapower (pure Python wheel via micropip): ~5MB
+- networkx, tqdm, deepdiff, and other pandapower dependencies
+
+**Total cold start: 50–80MB download, 20–60 seconds on a typical connection.**
+
+After the first visit, the browser caches most of this. Subsequent visits are much faster (~3–5 seconds). But the first impression is rough.
+
+**Mitigation options:**
+- Show a detailed progress bar so the user knows it's loading, not broken
+- Use a Service Worker to pre-cache Pyodide in the background on first visit
+- Consider hosting a stripped-down pandapower that excludes unused features (reduces size)
+- Display a "while you wait" message explaining what's happening
+
+#### Challenge 2: C Extension Packages Don't Work in Pyodide
+
+Pyodide only runs packages that have been compiled to WebAssembly. Many pandapower optional dependencies are **C extensions that are NOT available in Pyodide**:
+
+| Package | Status in Pyodide | Impact |
+|---|---|---|
+| `numpy` | ✅ Available | Core math — works |
+| `pandas` | ✅ Available | DataFrames — works |
+| `scipy` | ✅ Available | Sparse matrices — works |
+| `networkx` | ✅ Available (pure Python) | Graph topology — works |
+| `numba` | ❌ Not available | No JIT acceleration |
+| `lightsim2grid` | ❌ Not available | No C++ speed boost |
+| `matplotlib` | ⚠️ Partial | Static rendering only, no interactive window |
+| `plotly` | ✅ Available | Interactive charts work |
+| `PowerGridModel` | ❌ Not available | C++ library |
+
+**Bottom line:** The web UI runs pandapower in "pure Python mode" — using the standard Newton-Raphson solver without Numba or lightsim2grid acceleration. This is fine for small-to-medium networks (< 100 buses) but will be noticeably slow for larger ones.
+
+#### Challenge 3: No File System Access
+
+Pyodide runs in a sandboxed browser environment with no access to the real file system. This means:
+
+- `pp.to_json(net, "/some/path/network.json")` won't write to the user's disk
+- `pp.from_json("/some/path/network.json")` can't read from disk
+
+**Workaround:** Use Pyodide's in-memory file system for intermediate storage, then hand the result back to JavaScript as a JSON string and trigger a browser download:
+
+```javascript
+// JavaScript side — trigger file download from a JSON string
+function downloadJSON(jsonStr, filename) {
+    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+}
+```
+
+```python
+# Python side — serialize to string, not file
+import pandapower as pp, json
+json_str = pp.to_json(net)   # returns string when no path given
+json_str  # returned to JavaScript via Pyodide
+```
+
+#### Challenge 4: Memory Limits in the Browser
+
+Browsers enforce memory limits per tab (typically 1–4GB depending on device). A large pandapower network with many time-series steps can exhaust this:
+
+- A 500-bus network × 8760 time steps × storing 5 result columns = hundreds of MB of result data
+- The Pyodide runtime itself occupies ~150MB of baseline memory
+
+**Practical limit for the web UI:** Networks up to ~100 buses, time-series up to 96–288 steps (1–3 days at 15-min resolution). Anything larger should be done locally with the full Python install.
+
+#### Challenge 5: No Persistent State Between Page Reloads
+
+Every time the user reloads the page, Pyodide re-initializes from scratch. All network objects, results, and Python variables are gone. The only persistence available is:
+
+- `localStorage` — store JSON strings (up to ~5MB per origin)
+- File download — save JSON to user's computer
+
+The JSON save/load feature in the PRD addresses this for network definitions, but results must be downloaded before the page is closed.
+
+#### Challenge 6: micropip Installs PyPI Version, Not CGG Fork
+
+When the web UI runs `micropip.install('pandapower')`, it installs **the latest upstream pandapower from PyPI** — not the CGG fork. Any modifications made in the CGG fork are not present in the web UI.
+
+**This is intentional** (see fork decision §12) — the web UI is a standalone educational tool. But it means:
+- If we add a custom element type to the CGG fork, it won't be in the web UI
+- If upstream releases a breaking change, the web UI silently upgrades on next load
+
+**Mitigation:** Pin the micropip install to a specific pandapower version:
+```python
+await micropip.install('pandapower==3.0.0')  # pin exact version
+```
+
+#### Challenge 7: Debugging is Hard
+
+When pandapower crashes inside Pyodide:
+- The Python traceback is in the browser's JavaScript console (F12 → Console)
+- It's verbose and unfamiliar to users
+- Stack traces reference internal pandapower files the user doesn't have
+
+**Mitigation:** Wrap all `runpp()` calls in try/except and return clean, plain-English error messages. Never surface raw Python tracebacks to end users.
+
+```python
+try:
+    pp.runpp(net)
+except pp.powerflow.LoadflowNotConverged:
+    return json.dumps({"error": "power_flow_not_converged",
+                       "message": "The power flow did not converge. Try reducing load values or checking for isolated buses."})
+except Exception as e:
+    return json.dumps({"error": "unknown",
+                       "message": f"An unexpected error occurred: {type(e).__name__}"})
+```
+
+#### Challenge 8: GitHub Pages Deployment Gotchas
+
+Even though the output is static files, there are deployment-specific issues:
+
+- **Base URL paths:** If the app is at `/pandapower/pf-web/`, relative URLs in JavaScript must account for the subdirectory. Use `<base href="/pandapower/pf-web/">` or make all asset URLs absolute.
+- **CORS for Pyodide CDN:** Pyodide loads from a CDN. If the CDN URL ever changes, the load will silently fail. Always pin the Pyodide version:
+  ```html
+  <script src="https://cdn.jsdelivr.net/pyodide/v0.27.0/full/pyodide.js"></script>
+  ```
+- **GitHub Pages caching:** GitHub Pages has aggressive CDN caching. After pushing changes to `docs/`, the live site may take 1–5 minutes to update.
+- **Large files:** If any vendored JS files exceed GitHub's 100MB file limit (unlikely here), the push will fail.
+- **Jekyll interference:** GitHub Pages runs Jekyll by default and may try to process files. Add a `.nojekyll` file in `docs/` to disable this:
+  ```bash
+  touch docs/.nojekyll
+  ```
+
+---
+
+### 14.5 The Alternative: A Backend Server
+
+If the Pyodide approach proves too slow or limited, the alternative is a proper backend:
+
+| Approach | Pros | Cons |
+|---|---|---|
+| **Pyodide (current plan)** | Zero server cost, static hosting, no auth | Slow load, limited packages, browser memory limits |
+| **Flask/FastAPI on a VPS** | Full Python, fast, can use full pandapower | Requires server ($5–20/month), maintenance, security |
+| **Render / Railway free tier** | Managed hosting, easy deploy | Cold start delays on free tier, usage limits |
+| **Google Colab link** | Free, full Python, no setup | Not a real UI — opens notebook, not beginner-friendly |
+
+**CGG decision:** Start with Pyodide for the educational/demo use case. If CGG needs to run large studies or use the CGG fork's custom features, the tool should be run locally with the full Python install — not in the browser.
+
+---
+
+### 14.6 Summary: What the Deployment Model Means for Users
+
+| Question | Answer |
+|---|---|
+| Is there a server running? | No |
+| Is my venv used? | No — your venv is local-only |
+| Who runs the Python code? | The visitor's own browser |
+| What version of pandapower runs? | Latest from PyPI (not CGG fork) |
+| Can it handle 500 buses? | Probably not reliably |
+| What happens when I close the tab? | All results lost unless downloaded |
+| What happens if GitHub goes down? | Tool is unavailable |
+| Does it cost anything to host? | No — GitHub Pages is free |
+| How do I run the CGG fork's features? | Locally, with the full Python install |
+
+---
+
+*Added: 2026-03-25*
 
 ---
 
