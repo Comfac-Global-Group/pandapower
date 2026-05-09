@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0f172a">
+  <title>CGG PowerFlow Web</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/pyodide/v0.26.2/full/pyodide.js"></script>
+</head>
+<body>
+  <!-- Pyodide Loader -->
+  <div id="loader" class="loader-overlay">
+    <div class="loader-spinner"></div>
+    <div class="loader-text">Loading Python runtime…</div>
+    <div class="loader-sub">First visit may take 30–60 seconds</div>
+    <div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div>
+  </div>
+
+  <!-- Header -->
+  <header class="app-header">
+    <div class="app-title">⚡ CGG PowerFlow</div>
+    <div class="app-status">
+      <span id="status-dot" class="status-dot"></span>
+      <span id="status-text">Loading…</span>
+    </div>
+  </header>
+
+  <!-- Mode Toggle -->
+  <div class="mode-toggle">
+    <button class="mode-btn active" data-mode="snapshot">Snapshot</button>
+    <button class="mode-btn" data-mode="timeseries">Time-Series</button>
+  </div>
+
+  <!-- Template Selector (FDR-001) -->
+  <div class="section-header">📋 One-Tap Templates</div>
+  <div id="template-grid" class="template-grid"></div>
+
+  <!-- Network Builder -->
+  <div class="section-header">🔧 Network Definition</div>
+
+  <!-- External Grid -->
+  <div class="form-card">
+    <div class="form-card-header">External Grid (Slack)</div>
+    <div class="form-card-body">
+      <div class="form-group">
+        <label class="form-label">Connected Bus</label>
+        <select id="ext-bus" class="form-select"></select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Voltage magnitude (pu)</label>
+        <input id="ext-vm" type="number" step="0.01" class="form-input" value="1.02">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div class="form-group">
+          <label class="form-label">Min voltage (pu)</label>
+          <input id="ext-min" type="number" step="0.01" class="form-input" value="0.95">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Max voltage (pu)</label>
+          <input id="ext-max" type="number" step="0.01" class="form-input" value="1.05">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Buses -->
+  <div class="form-card">
+    <div class="form-card-header">
+      <span>Buses</span>
+      <button class="btn btn-sm btn-secondary" onclick="app.addBus()">+ Add</button>
+    </div>
+    <div id="buses-container" class="form-card-body"></div>
+  </div>
+
+  <!-- Lines -->
+  <div class="form-card">
+    <div class="form-card-header">
+      <span>Lines</span>
+      <button class="btn btn-sm btn-secondary" onclick="app.addLine()">+ Add</button>
+    </div>
+    <div id="lines-container" class="form-card-body"></div>
+  </div>
+
+  <!-- Loads -->
+  <div class="form-card">
+    <div class="form-card-header">
+      <span>Loads</span>
+      <button class="btn btn-sm btn-secondary" onclick="app.addLoad()">+ Add</button>
+    </div>
+    <div id="loads-container" class="form-card-body"></div>
+  </div>
+
+  <!-- Static Generators -->
+  <div class="form-card">
+    <div class="form-card-header">
+      <span>Static Generators (Solar/Wind)</span>
+      <button class="btn btn-sm btn-secondary" onclick="app.addSgen()">+ Add</button>
+    </div>
+    <div id="sgens-container" class="form-card-body"></div>
+  </div>
+
+  <!-- Transformers -->
+  <div class="form-card">
+    <div class="form-card-header">
+      <span>Transformers</span>
+      <button class="btn btn-sm btn-secondary" onclick="app.addTrafo()">+ Add</button>
+    </div>
+    <div id="trafos-container" class="form-card-body"></div>
+  </div>
+
+  <!-- Run Button -->
+  <div class="run-section">
+    <button id="run-btn" class="btn btn-primary" onclick="app.runPowerFlow()" disabled>
+      ▶ Run Power Flow
+    </button>
+  </div>
+
+  <!-- Results -->
+  <div id="results-section" class="results-section hidden">
+    <div class="section-header">📊 Results</div>
+    <div id="results-content"></div>
+  </div>
+
+  <!-- Spacer for bottom scroll -->
+  <div style="height:120px;"></div>
+
+  <script src="templates.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
