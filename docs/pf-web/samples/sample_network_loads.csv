@@ -1,0 +1,4 @@
+bus_idx,p_mw,q_mvar,name,in_service
+1,1.0,0.3,Residential Load,1
+2,0.8,0.25,Commercial Load,1
+3,1.5,0.5,Industrial Load,1

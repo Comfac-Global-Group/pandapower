@@ -36,6 +36,69 @@
   <div class="section-header">📋 One-Tap Templates</div>
   <div id="template-grid" class="template-grid"></div>
 
+  <!-- Demo & Test Data -->
+  <div class="section-header">🧪 Demo & Test Data</div>
+  <div class="template-grid">
+    <div class="template-card" onclick="app.loadDemo('residential-solar')">
+      <div class="template-icon">🏠☀️</div>
+      <div class="template-name">Residential + Solar</div>
+      <div class="template-desc">Full demo with 24hr profiles</div>
+    </div>
+    <div class="template-card" onclick="app.loadDemo('commercial-peak')">
+      <div class="template-icon">🏢⚡</div>
+      <div class="template-name">Commercial Peak</div>
+      <div class="template-desc">Office building daytime peak</div>
+    </div>
+    <div class="template-card" onclick="app.loadDemo('industrial-motor')">
+      <div class="template-icon">🏭🔧</div>
+      <div class="template-name">Industrial Motor</div>
+      <div class="template-desc">Motor starting load study</div>
+    </div>
+  </div>
+
+  <!-- CSV Import -->
+  <div class="section-header">📥 Import from CSV / Spreadsheet</div>
+  <div class="form-card">
+    <div class="form-card-body">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div class="form-group">
+          <label class="form-label">Buses CSV</label>
+          <input type="file" accept=".csv" class="form-input" onchange="app.importCsv('buses',this)">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Lines CSV</label>
+          <input type="file" accept=".csv" class="form-input" onchange="app.importCsv('lines',this)">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Loads CSV</label>
+          <input type="file" accept=".csv" class="form-input" onchange="app.importCsv('loads',this)">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Load Profile CSV</label>
+          <input type="file" accept=".csv" class="form-input" onchange="app.importCsv('profile',this)">
+        </div>
+      </div>
+      <p style="font-size:0.75rem;color:var(--color-text-muted);margin-top:8px;">
+        📎 Download sample CSVs from <code>docs/pf-web/samples/</code> in the repo.
+      </p>
+    </div>
+  </div>
+
+  <!-- Time-Series Profiles Panel -->
+  <div id="ts-panel" class="hidden">
+    <div class="section-header">📈 Time-Series Profiles</div>
+    <div class="form-card">
+      <div class="form-card-body">
+        <div class="form-group">
+          <label class="form-label">Number of time steps</label>
+          <input id="ts-steps" type="number" class="form-input" value="96" min="1" max="288">
+        </div>
+        <div id="ts-profiles-container"></div>
+        <button class="add-btn" onclick="app.addTsProfile()">+ Add Profile Mapping</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Network Builder -->
   <div class="section-header">🔧 Network Definition</div>
 
@@ -111,8 +174,8 @@
 
   <!-- Run Button -->
   <div class="run-section">
-    <button id="run-btn" class="btn btn-primary" onclick="app.runPowerFlow()" disabled>
-      ▶ Run Power Flow
+    <button id="run-btn" class="btn btn-primary" onclick="app.runAnalysis()" disabled>
+      ▶ Run Analysis
     </button>
   </div>
 
